@@ -204,7 +204,7 @@ func (w *worker) send(req *fasthttp.Request, resp *fasthttp.Response,
 	}()
 	select {
 	case duration := <-w.ch_duration:
-		log.Println(fmt.Sprintf("%+v", resp))
+		//log.Println(fmt.Sprintf("%+v", resp))
 		return nil, duration
 	case err := <-w.ch_error:
 		log.Printf("rerquest completed with error:%s", err.Error())
