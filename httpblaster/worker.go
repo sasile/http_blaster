@@ -29,6 +29,8 @@ import (
 	"net"
 	"sync"
 	"time"
+	"encoding/pem"
+	"crypto/x509"
 )
 
 const DialTimeout = 60 * time.Second
@@ -94,6 +96,10 @@ func (w *worker) send_request(req *fasthttp.Request) (error, time.Duration) {
 }
 
 func (w *worker) open_connection() {
+	if w.is_tls_client {
+		w.open_secure_connection()
+		return
+	}
 	conn, err := fasthttp.DialTimeout(w.host, DialTimeout)
 	//conn.SetReadDeadline(time.Now().Add(time.Second*30))
 	//conn.SetWriteDeadline(time.Now().Add(time.Second*30))
@@ -112,6 +118,58 @@ func (w *worker) open_connection() {
 	w.br = bufio.NewReaderSize(w.conn, 1024*1024)
 	w.bw = bufio.NewWriter(w.conn)
 }
+
+
+func (w *worker) open_secure_connection(){
+	client_cert := `-----BEGIN CERTIFICATE-----
+MIIC6DCCAdCgAwIBAgIIG/ia1DcCQ2UwDQYJKoZIhvcNAQELBQAwNDELMAkGA1UE
+BhMCVVMxEDAOBgNVBAcTB1NlYXR0bGUxEzARBgNVBAMTCkFwaUdhdGV3YXkwHhcN
+MTcwNzIzMDkwOTA4WhcNMTgwNzIzMDkwOTA4WjA0MQswCQYDVQQGEwJVUzEQMA4G
+A1UEBxMHU2VhdHRsZTETMBEGA1UEAxMKQXBpR2F0ZXdheTCCASIwDQYJKoZIhvcN
+AQEBBQADggEPADCCAQoCggEBANC/PmqZEwyX9pmEEXYabfjxQ2/3p2WGFvwyZRtV
+eaH3FpuJhTjwm0/niMdopgVDhl8Z9ZmEYMzUbuKO4oITEVzlyvzPoZoihcmGF7k1
+MWsDX7jvJdjR9fGPasLOFEJJ/PxP+Cb9DsP2JZsS+dEEzrS/qr0l1rEnIvuHnCrQ
+3qlSgUaT0JWF/F8EFPGXxbleL0i+Z4s/GBNxvDwReihJUz96w8vg3aRpVIJHo9nL
+v1Oj7t6R14vB8Wb5zeXFKfER+0JS3YPpUQxrqt69Xxl+obHCddY3mO3aanNTuMfw
+zF9srXnkzQW7jICi+z0HGevIlHvfcq5j8yJMT10Cz5S9dmUCAwEAATANBgkqhkiG
+9w0BAQsFAAOCAQEAJ8q8g7nAfJFwvTDGRq7GUQNE6xUrBcVOdhfpUZgkrtZYZbWt
+Y9rURGxMhMJYgfdcUL3hXa/yNiSU8H+wGOL0UTSVIkA/NxsVw/bDic5MVXi9ttZ/
+Q3LQI9GS1BqLxSJ86odNprJSYdjLCYq+h3ghQHuElDLf7/LFCtVYgWfNCMLJ9AX+
+dN5bsHRPreqTeozPOIio6zhQGSor67Z7NqlZF1EoJBcK73AobfeAsK+ib1FLRZY1
+v0qPpbfPWUt+QQ5ITdRFbUrRJIm4lxzcy0A/RMT8jXI3yPU+K/YSzMgOHDU8MChN
+7eTcZwceFs3kS8iwRj/O01vPTBv76yIYlmlrxQ==
+-----END CERTIFICATE-----`
+	conn, err := fasthttp.DialTimeout(w.host, DialTimeout)
+	block ,_ := pem.Decode([]byte (client_cert))
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		panic(err)
+		log.Fatal(err)
+	}
+	clientCertPool := x509.NewCertPool()
+	clientCertPool.AddCert(cert)
+
+	if w.is_tls_client {
+		conf := &tls.Config{
+			ServerName:"29mbw8bh6b.execute-api.us-east-1.amazonaws.com",
+			ClientAuth: tls.RequireAndVerifyClientCert,
+			InsecureSkipVerify: true,
+			ClientCAs: clientCertPool,
+		}
+		c := tls.Client(conn, conf)
+		err:= c.Handshake()
+		if err != nil{
+			panic(err)
+		}
+		w.conn = c
+	} else {
+		w.conn = conn
+	}
+	w.br = bufio.NewReaderSize(w.conn, 1024*1024)
+	w.bw = bufio.NewWriter(w.conn)
+}
+
+
 
 func (w *worker) close_connection() {
 	if w.conn != nil {
@@ -146,6 +204,7 @@ func (w *worker) send(req *fasthttp.Request, resp *fasthttp.Response,
 	}()
 	select {
 	case duration := <-w.ch_duration:
+		log.Println(fmt.Sprintf("%+v", resp))
 		return nil, duration
 	case err := <-w.ch_error:
 		log.Printf("rerquest completed with error:%s", err.Error())
